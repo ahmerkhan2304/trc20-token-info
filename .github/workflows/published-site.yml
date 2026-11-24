@@ -1,0 +1,45 @@
+name: Check published disclosure
+on:
+  push:
+    branches: [verify-published-site]
+permissions: {}
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify public mobile and desktop rendering
+        shell: bash
+        run: |
+          python3 -m venv "$RUNNER_TEMP/viewport-env"
+          "$RUNNER_TEMP/viewport-env/bin/pip" install --quiet playwright==1.56.0
+          "$RUNNER_TEMP/viewport-env/bin/python" - <<'PY'
+          from playwright.sync_api import sync_playwright
+          from shutil import which
+          from urllib.request import urlopen
+          from hashlib import sha256
+
+          url = "https://ahmerkhan2304.github.io/trc20-token-info/"
+          with urlopen(url + "logo.png") as response:
+              assert response.status == 200
+              assert sha256(response.read()).hexdigest() == "88087329cc046e6c947d9f193224ba57050270adf7ac9497dd70d790cccd9435"
+          with sync_playwright() as engine:
+              browser = engine.chromium.launch(executable_path=which("google-chrome"))
+              for width, height, mobile in [(360, 800, True), (390, 844, True), (1440, 900, False)]:
+                  context = browser.new_context(viewport={"width": width, "height": height}, is_mobile=mobile, has_touch=mobile)
+                  page = context.new_page()
+                  response = page.goto(url, wait_until="networkidle")
+                  assert response.status == 200
+                  assert page.title() == "Independent TRC-20 Demo · Token information"
+                  assert page.locator("html").evaluate("(e) => e.scrollWidth === e.clientWidth && e.clientWidth === " + str(width))
+                  assert page.locator("header img").evaluate("(e) => e.complete && e.naturalWidth === 128")
+                  assert page.get_by_text("TAw73b3KnsxHQXqx3dpR8Qz4JyaitPD5W9", exact=True).is_visible()
+                  assert page.get_by_text("TYuvAvhAaiRyN7cytxCkf2MfriAXAKFdLv", exact=True).is_visible()
+                  details = page.locator("dl").inner_text()
+                  assert "100,000,000" in details and details.count("USDT") == 2
+                  assert "not affiliated with, issued by, or backed by Tether" in page.locator(".notice").inner_text()
+                  assert page.get_by_text("Unsafe", exact=True).is_visible()
+                  print(f"PASS {width}x{height}: HTTPS 200, contract, owner, ticker, supply, logo, warnings, no overflow.")
+                  context.close()
+              browser.close()
+          PY
